@@ -58,21 +58,28 @@ namespace XlsToEf.Import
                 using (var excel = new ExcelPackage(new FileInfo(filePath)))
                 {
                     var sheet = excel.Workbook.Worksheets.First(x => x.Name == sheetName);
-
-
+                    var start = sheet.Dimension.Start;
+                    var end = sheet.Dimension.End;
                     var rows = new List<Dictionary<string, string>>();
+                    var firstDataRow = start.Row + 1;
+                    var columnHeaders = sheet.Cells[start.Row, start.Column, start.Row, end.Column].Select(x => x.Text).ToList();
 
-                    for (var rowNum = 2; rowNum <= sheet.Dimension.End.Row; rowNum++)
+                    for (var rowNum = firstDataRow; rowNum <= end.Row; rowNum++)
                     {
                         var rowDict = new Dictionary<string, string>();
-                        var row = sheet.Cells[string.Format("{0}:{0}", rowNum)];
+                        var cellValues = new List<string>();
 
-                        var rowCells = row.ToList();
+                        for (var col = start.Column; col <= end.Column; col++)
+                        { 
+                            cellValues.Add(sheet.Cells[rowNum, col].Text ?? string.Empty);
+                        }
+
                         for (var colIndex = 0; colIndex < sheet.Dimension.Columns; colIndex++)
                         {
-                            var cell = rowCells[colIndex];
-                            rowDict.Add(sheet.Cells[1, colIndex+1].Text, cell.Text);
+                            var cellText = cellValues[colIndex];
+                            rowDict.Add(columnHeaders[colIndex], cellText);
                         }
+
                         rows.Add(rowDict);
                     }
 
