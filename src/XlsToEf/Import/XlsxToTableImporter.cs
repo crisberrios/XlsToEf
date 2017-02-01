@@ -223,8 +223,7 @@ namespace XlsToEf.Import
         private async Task<TEntity> GetMatchedDbObject<TEntity, TId>(Func<TId, Expression<Func<TEntity, bool>>> finder, string idStringValue, Type idType) where TEntity : class
         {
             if (string.IsNullOrWhiteSpace(idStringValue)) return null;
-
-            TEntity matchedDbObject;
+            TEntity matchedEntity;
 
             if (finder != null)
             {
