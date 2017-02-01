@@ -230,15 +230,21 @@ namespace XlsToEf.Import
             {
                 var finderInputType = (TId) Convert.ChangeType(idStringValue,typeof(TId));
                 var getExp = finder(finderInputType);
-                matchedDbObject = await _dbContext.Set<TEntity>().FirstOrDefaultAsync(getExp);
+                matchedEntity = await  _dbContext.Set<TEntity>().FirstOrDefaultAsync(getExp);
+            }
+
+            if (idType == typeof (Guid))
+            {
+                var idData = new Guid(idStringValue);
+                matchedEntity = await _dbContext.Set<TEntity>().FindAsync(idData);
             }
             else
             {
                 var idData = Convert.ChangeType(idStringValue, idType);
-                matchedDbObject = await _dbContext.Set<TEntity>().FindAsync(idData);
+                matchedEntity = await _dbContext.Set<TEntity>().FindAsync(idData);
             }
 
-            return matchedDbObject;
+            return matchedEntity;
         }
 
         private static void ValidateDbResult<TEntity>(TEntity matchedDbObject, RecordMode recordMode, string xlsxIdColName, string idValue) where TEntity : class
@@ -360,9 +366,15 @@ namespace XlsToEf.Import
         public static object Convert(string xlsxItemData, Type propertyType)
         {
             object converted;
+
+            if (propertyType == typeof (string))
+            {
+                return xlsxItemData;
+            }
+
             if (propertyType.IsGenericType && propertyType.GetGenericTypeDefinition() == typeof (Nullable<>))
             {
-                converted = String.IsNullOrEmpty(xlsxItemData)
+                converted = string.IsNullOrEmpty(xlsxItemData)
                     ? null :  ConvertString(xlsxItemData, propertyType.GetGenericArguments()[0]);
             }
             else
@@ -382,6 +394,10 @@ namespace XlsToEf.Import
 
             if (propertyType == typeof(byte))
                 return byte.Parse(xlsxItemData, NumberStyles.AllowThousands);
+
+            if (propertyType == typeof (Guid))
+                return new Guid(xlsxItemData);
+
 //            if (propertyType == typeof (bool))
 //                return DisplayConversions.StringToBool(xlsxItemData);
 
