@@ -95,27 +95,32 @@ namespace XlsToEf.Import
                 _dbContext.Configuration.ValidateOnSaveEnabled = false;
             }
             var genericListType = typeof(List<>).MakeGenericType(idType);
-            var rowIds = (IList)Activator.CreateInstance(genericListType);
-            IList existingIds = (IList)Activator.CreateInstance(genericListType);
+            var rowIds = new List<object>();
+            var existingIds = (IList)Activator.CreateInstance(genericListType);
 
             if (isImportingEntityId)
             {
                 var xlsxIdColName = selctedDict[idPropertyName];
-               
-                foreach (var excelRow in excelRows)
-                {
-                    var idStringValue = excelRow[xlsxIdColName];
-                    var id = StringToTypeConverter.ConvertString(idStringValue, idType);
-                    rowIds.Add(id);
-                }
+
+                rowIds.AddRange(excelRows.Select(excelRow => excelRow[xlsxIdColName])
+                    .Select(idStringValue => StringToTypeConverter.Convert(idStringValue, idType)));
+
                 if (rowIds.Count > 0)
                 {
                     var sqlQuery = $"Select [{idPropertyName}] from {tableName}";
                     var dbIds = await _dbContext.Database.SqlQuery(idType, sqlQuery).ToListAsync();
-                    existingIds = dbIds.Where(x => rowIds.Contains(x)).ToList();
+                    var ids = from id in dbIds
+                        join rowId in rowIds on 
+                        id equals rowId
+                        select id;
+
+                    existingIds = ids.ToList();
                 }
             }
- 
+
+            Task task = null;
+            var pendingEntities = new List<TEntity>();
+
             for (var index = 0; index < excelRows.Count; index++)
             {
                 var excelRow = excelRows[index];
@@ -123,7 +128,7 @@ namespace XlsToEf.Import
                 TEntity entityToUpdate = null;
                 try
                 {
-                    if (ExcelRowIsBlank(excelRow))
+                    if (saveBehavior.checkForEmptyRows && ExcelRowIsBlank(excelRow))
                         continue;
 
                     string idValue = null;
@@ -132,28 +137,36 @@ namespace XlsToEf.Import
                     {
                         var xlsxIdColName = selctedDict[idPropertyName];
                         var idStringValue = excelRow[xlsxIdColName];
+                        var id = rowIds[index];
 
-                        if (saveBehavior.RecordMode == RecordMode.CreateOrIgnore)
+                        if (saveBehavior.RecordMode == RecordMode.CreateOrIgnore && existingIds.Contains(id))
                         {
-                            var id = rowIds[index];
-                            if (existingIds.Contains(id))
-                            {
                                 continue;
-                            }
+                        }
+
+                        if (saveBehavior.RecordMode != RecordMode.CreateOrIgnore)
+                        {
+                            entityToUpdate = await GetMatchedDbObject(finder, idStringValue, idType);
+                            ValidateDbResult(entityToUpdate, saveBehavior.RecordMode, xlsxIdColName, idStringValue);
                         }
                         else
                         {
-                            entityToUpdate = await GetMatchedDbObject(finder, idStringValue, idType);
+                            existingIds.Add(id);
                         }
-
-                        ValidateDbResult(entityToUpdate, saveBehavior.RecordMode, xlsxIdColName, idStringValue);
                     }
 
                     if (entityToUpdate == null)
                     {
-                        EnsureNoEntityCreationWithIdWhenAutoIncrementIdType(idPropertyName, isAutoIncrementingId, idValue);
                         entityToUpdate = new TEntity();
-                        _dbContext.Set<TEntity>().Add(entityToUpdate);
+                        if (saveBehavior.CommitMode == CommitMode.Bulk)
+                        {
+                            pendingEntities.Add(entityToUpdate);
+                        }
+                        else
+                        {
+                            EnsureNoEntityCreationWithIdWhenAutoIncrementIdType(idPropertyName, isAutoIncrementingId, idValue);
+                            _dbContext.Set<TEntity>().Add(entityToUpdate);
+                        }
                     }
 
                     await MapIntoEntity(selctedDict, idPropertyName, overridingMapper, entityToUpdate, excelRow, isAutoIncrementingId, saveBehavior.RecordMode);
@@ -188,12 +201,24 @@ namespace XlsToEf.Import
                     await _dbContext.SaveChangesAsync();
                 }
 
-                if (saveBehavior.CommitMode == CommitMode.Bulk && !foundErrors && index % 100 == 0)
+                if (saveBehavior.CommitMode == CommitMode.Bulk && (index%100 == 0 || index == excelRows.Count - 1)  && !foundErrors)
                 {
-                    await _dbContext.BulkSaveChangesAsync(b => b.BatchSize = 100);
+                    if (task != null)
+                    {
+                        await task;
+                        task = null;
+                    }
+                    _dbContext.Set<TEntity>().AddRange(pendingEntities);
+                    task = _dbContext.BulkSaveChangesAsync(b => b.BatchSize = 50);
+                    pendingEntities.Clear();
                 }
             }
 
+            if (task != null)
+            {
+                await task;
+            }
+            
             _dbContext.Configuration.AutoDetectChangesEnabled = true;
             _dbContext.Configuration.ValidateOnSaveEnabled = true;
 
@@ -323,8 +348,6 @@ namespace XlsToEf.Import
 
         private void EnsureImportingEntityHasSingleKey(ReadOnlyMetadataCollection<EdmMember> keyInfo)
         {
-
-
             if (keyInfo.Count > 1)
             {
                 throw new Exception("XlsToEf only supports Single Column Key right now");
@@ -417,12 +440,15 @@ namespace XlsToEf.Import
     {
         public static object Convert(string xlsxItemData, Type propertyType)
         {
-            object converted;
-
             if (propertyType == typeof(string))
             {
                 return xlsxItemData;
             }
+
+            if (propertyType == typeof(Guid))
+                return new Guid(xlsxItemData);
+
+            object converted;
 
             if (propertyType.IsGenericType && propertyType.GetGenericTypeDefinition() == typeof(Nullable<>))
             {
@@ -446,12 +472,6 @@ namespace XlsToEf.Import
 
             if (propertyType == typeof(byte))
                 return byte.Parse(xlsxItemData, NumberStyles.AllowThousands);
-
-            if (propertyType == typeof(Guid))
-                return new Guid(xlsxItemData);
-
-            //            if (propertyType == typeof (bool))
-            //                return DisplayConversions.StringToBool(xlsxItemData);
 
             return System.Convert.ChangeType(xlsxItemData, propertyType, CultureInfo.CurrentCulture);
         }

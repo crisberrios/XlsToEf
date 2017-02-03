@@ -2,6 +2,8 @@
 {
     public class ImportSaveBehavior
     {
+        public bool checkForEmptyRows;
+
         public ImportSaveBehavior()
         {
             RecordMode = RecordMode.Upsert;

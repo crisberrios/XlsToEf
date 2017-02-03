@@ -2383,7 +2383,7 @@
           "lib/net45/Z.EntityFramework.Extensions.dll": {}
         }
       },
-      "XlsToEf/0.0.0": {
+      "XlsToEf/0.0.1-hs-beta": {
         "type": "project",
         "framework": ".NETFramework,Version=v4.6",
         "dependencies": {
@@ -6569,7 +6569,7 @@
         "lib/net45/Z.EntityFramework.Extensions.dll"
       ]
     },
-    "XlsToEf/0.0.0": {
+    "XlsToEf/0.0.1-hs-beta": {
       "type": "project",
       "path": "../XlsToEf/project.json",
       "msbuildProject": "../XlsToEf/XlsToEf.xproj"
@@ -6598,7 +6598,7 @@
       "Microsoft.VisualStudio.Web.BrowserLink.Loader >= 14.0.0",
       "Scrutor >= 1.10.0",
       "System.Reflection >= 4.0.10",
-      "XlsToEf >= 0.0.0-*",
+      "XlsToEf >= 0.0.1-hs-beta-*",
       "log4net >= 2.0.5"
     ],
     ".NETFramework,Version=v4.6": [
