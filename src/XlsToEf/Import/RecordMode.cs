@@ -4,6 +4,7 @@ namespace XlsToEf.Import
     {
         UpdateOnly,
         CreateOnly,
-        Upsert
+        Upsert,
+        CreateOrIgnore
     }
 }

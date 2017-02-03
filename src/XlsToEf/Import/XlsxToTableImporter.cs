@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Data.Entity;
 using System.Data.Entity.Core.Mapping;
@@ -67,29 +68,54 @@ namespace XlsToEf.Import
 
             var selctedDict = BuildDictionaryFromSelected(matchingData.Selected);
 
-            var keyInfo =  GetEntityKeys(typeof (TEntity));
+            var keyInfo = GetEntityKeys(typeof(TEntity));
             EnsureImportingEntityHasSingleKey(keyInfo);
             var pk = keyInfo[0];
-            Type idType = ((PrimitiveType) pk.TypeUsage.EdmType).ClrEquivalentType;
-
+            Type idType = ((PrimitiveType)pk.TypeUsage.EdmType).ClrEquivalentType;
 
             if (idPropertyName == null)
             {
                 idPropertyName = pk.Name;
             }
-
+            var tableObj = GetTable(typeof(TEntity));
+            var tableName = $"[{tableObj.Schema}].[{tableObj.Table}]";
             var isImportingEntityId = selctedDict.ContainsKey(idPropertyName);
             var isAutoIncrementingId = IsIdAutoIncrementing(typeof(TEntity));
 
             EnsureNoIdColumnIncludedWhenCreatingAutoIncrementEntites(saveBehavior.RecordMode, isAutoIncrementingId, isImportingEntityId);
-            
-            var importResult = new ImportResult {RowErrorDetails = new Dictionary<string, string>()};
 
-            var filePath  = Path.GetTempPath() + matchingData.FileName;
-
+            var importResult = new ImportResult { RowErrorDetails = new Dictionary<string, string>() };
+            var filePath = Path.GetTempPath() + matchingData.FileName;
             var excelRows = await _excelIoWrapper.GetRows(filePath, matchingData.Sheet);
-
             var foundErrors = false;
+
+            if (saveBehavior.RecordMode == RecordMode.CreateOrIgnore && saveBehavior.CommitMode == CommitMode.Bulk)
+            {
+                _dbContext.Configuration.AutoDetectChangesEnabled = false;
+                _dbContext.Configuration.ValidateOnSaveEnabled = false;
+            }
+            var genericListType = typeof(List<>).MakeGenericType(idType);
+            var rowIds = (IList)Activator.CreateInstance(genericListType);
+            IList existingIds = (IList)Activator.CreateInstance(genericListType);
+
+            if (isImportingEntityId)
+            {
+                var xlsxIdColName = selctedDict[idPropertyName];
+               
+                foreach (var excelRow in excelRows)
+                {
+                    var idStringValue = excelRow[xlsxIdColName];
+                    var id = StringToTypeConverter.ConvertString(idStringValue, idType);
+                    rowIds.Add(id);
+                }
+                if (rowIds.Count > 0)
+                {
+                    var sqlQuery = $"Select [{idPropertyName}] from {tableName}";
+                    var dbIds = await _dbContext.Database.SqlQuery(idType, sqlQuery).ToListAsync();
+                    existingIds = dbIds.Where(x => rowIds.Contains(x)).ToList();
+                }
+            }
+ 
             for (var index = 0; index < excelRows.Count; index++)
             {
                 var excelRow = excelRows[index];
@@ -101,11 +127,24 @@ namespace XlsToEf.Import
                         continue;
 
                     string idValue = null;
+
                     if (isImportingEntityId)
                     {
                         var xlsxIdColName = selctedDict[idPropertyName];
                         var idStringValue = excelRow[xlsxIdColName];
-                        entityToUpdate = await GetMatchedDbObject(finder, idStringValue, idType);
+
+                        if (saveBehavior.RecordMode == RecordMode.CreateOrIgnore)
+                        {
+                            var id = rowIds[index];
+                            if (existingIds.Contains(id))
+                            {
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            entityToUpdate = await GetMatchedDbObject(finder, idStringValue, idType);
+                        }
 
                         ValidateDbResult(entityToUpdate, saveBehavior.RecordMode, xlsxIdColName, idStringValue);
                     }
@@ -146,9 +185,17 @@ namespace XlsToEf.Import
 
                 if (saveBehavior.CommitMode == CommitMode.AnySuccessfulOneAtATime)
                 {
-                   await  _dbContext.SaveChangesAsync();
-                } 
+                    await _dbContext.SaveChangesAsync();
+                }
+
+                if (saveBehavior.CommitMode == CommitMode.Bulk && !foundErrors && index % 100 == 0)
+                {
+                    await _dbContext.BulkSaveChangesAsync(b => b.BatchSize = 100);
+                }
             }
+
+            _dbContext.Configuration.AutoDetectChangesEnabled = true;
+            _dbContext.Configuration.ValidateOnSaveEnabled = true;
 
             if ((saveBehavior.CommitMode == CommitMode.AnySuccessfulAtEndAsBulk) ||
                 (saveBehavior.CommitMode == CommitMode.CommitAllAtEndIfAllGoodOrRejectAll && !foundErrors))
@@ -162,7 +209,7 @@ namespace XlsToEf.Import
         private Dictionary<string, string> BuildDictionaryFromSelected(List<XlsToEfColumnPair> selected)
         {
             var hasDups = selected.GroupBy(x => x.EfName)
-                .Select(group => new {Name = group.Key, Count = group.Count()})
+                .Select(group => new { Name = group.Key, Count = group.Count() })
                 .Any(x => x.Count > 1);
             if (hasDups)
             {
@@ -197,7 +244,7 @@ namespace XlsToEf.Import
 
         private static async Task MapIntoEntity<TEntity>(Dictionary<string, string> matchingData, string idPropertyName,
             UpdatePropertyOverrider<TEntity> overridingMapper, TEntity entityToUpdate, Dictionary<string, string> excelRow, bool isAutoIncrementingId, RecordMode recordMode)
-            
+
         {
             if (overridingMapper != null)
             {
@@ -211,7 +258,7 @@ namespace XlsToEf.Import
 
         // this condition might happen when Upserting. unlike the other check, this check is per-row.
         private static void EnsureNoEntityCreationWithIdWhenAutoIncrementIdType(string idPropertyName,
-            bool isAutoIncrementingId, string idValue) 
+            bool isAutoIncrementingId, string idValue)
         {
             if (isAutoIncrementingId && !string.IsNullOrWhiteSpace(idValue))
             {
@@ -227,12 +274,12 @@ namespace XlsToEf.Import
 
             if (finder != null)
             {
-                var finderInputType = (TId) Convert.ChangeType(idStringValue,typeof(TId));
+                var finderInputType = (TId)Convert.ChangeType(idStringValue, typeof(TId));
                 var getExp = finder(finderInputType);
-                matchedEntity = await  _dbContext.Set<TEntity>().FirstOrDefaultAsync(getExp);
+                return await _dbContext.Set<TEntity>().FirstOrDefaultAsync(getExp);
             }
 
-            if (idType == typeof (Guid))
+            if (idType == typeof(Guid))
             {
                 var idData = new Guid(idStringValue);
                 matchedEntity = await _dbContext.Set<TEntity>().FindAsync(idData);
@@ -274,7 +321,8 @@ namespace XlsToEf.Import
             }
         }
 
-        private void EnsureImportingEntityHasSingleKey(ReadOnlyMetadataCollection<EdmMember> keyInfo) { 
+        private void EnsureImportingEntityHasSingleKey(ReadOnlyMetadataCollection<EdmMember> keyInfo)
+        {
 
 
             if (keyInfo.Count > 1)
@@ -302,16 +350,24 @@ namespace XlsToEf.Import
                 .Single(e => objectItemCollection.GetClrType(e) == eType);
 
             // Get the entity set that uses this entity type
-            
+
             return entityType.KeyMembers;
         }
 
         private EdmMember GetMappedKeyInformation(Type eType)
         {
-            var metadata = ((IObjectContextAdapter) _dbContext).ObjectContext.MetadataWorkspace;
+            var table = GetTable(eType);
+            var readOnlyMetadataCollection = table.ElementType.KeyMembers;
+
+            return readOnlyMetadataCollection[0];
+        }
+
+        private EntitySet GetTable(Type eType)
+        {
+            var metadata = ((IObjectContextAdapter)_dbContext).ObjectContext.MetadataWorkspace;
 
             // Get the part of the model that contains info about the actual CLR types
-            var objectItemCollection = ((ObjectItemCollection) metadata.GetItemCollection(DataSpace.OSpace));
+            var objectItemCollection = ((ObjectItemCollection)metadata.GetItemCollection(DataSpace.OSpace));
 
             // Get the entity type from the model that maps to the CLR type
             var entityType = metadata
@@ -332,17 +388,14 @@ namespace XlsToEf.Import
                 .Single(s => s.EntitySet == entitySet);
 
             // Find the storage entity set (table) that the entity is mapped
-            var table = mapping
+            return mapping
                 .EntityTypeMappings.Single()
                 .Fragments.Single()
                 .StoreEntitySet;
-
-            var readOnlyMetadataCollection = table.ElementType.KeyMembers;
-            return readOnlyMetadataCollection[0];
         }
 
         private static void UpdateProperties<TSelector>(TSelector matchedObject, Dictionary<string, string> matches,
-            Dictionary<string, string> excelRow, string selectorColName, bool shouldSkipIdInsert) 
+            Dictionary<string, string> excelRow, string selectorColName, bool shouldSkipIdInsert)
         {
             foreach (var entityPropertyName in matches.Keys)
             {
@@ -366,15 +419,15 @@ namespace XlsToEf.Import
         {
             object converted;
 
-            if (propertyType == typeof (string))
+            if (propertyType == typeof(string))
             {
                 return xlsxItemData;
             }
 
-            if (propertyType.IsGenericType && propertyType.GetGenericTypeDefinition() == typeof (Nullable<>))
+            if (propertyType.IsGenericType && propertyType.GetGenericTypeDefinition() == typeof(Nullable<>))
             {
                 converted = string.IsNullOrEmpty(xlsxItemData)
-                    ? null :  ConvertString(xlsxItemData, propertyType.GetGenericArguments()[0]);
+                    ? null : ConvertString(xlsxItemData, propertyType.GetGenericArguments()[0]);
             }
             else
             {
@@ -383,9 +436,9 @@ namespace XlsToEf.Import
             return converted;
         }
 
-        private static object ConvertString(string xlsxItemData, Type propertyType)
+        public static object ConvertString(string xlsxItemData, Type propertyType)
         {
-            if (propertyType == typeof (short))
+            if (propertyType == typeof(short))
                 return short.Parse(xlsxItemData, NumberStyles.AllowThousands);
 
             if (propertyType == typeof(int))
@@ -394,11 +447,11 @@ namespace XlsToEf.Import
             if (propertyType == typeof(byte))
                 return byte.Parse(xlsxItemData, NumberStyles.AllowThousands);
 
-            if (propertyType == typeof (Guid))
+            if (propertyType == typeof(Guid))
                 return new Guid(xlsxItemData);
 
-//            if (propertyType == typeof (bool))
-//                return DisplayConversions.StringToBool(xlsxItemData);
+            //            if (propertyType == typeof (bool))
+            //                return DisplayConversions.StringToBool(xlsxItemData);
 
             return System.Convert.ChangeType(xlsxItemData, propertyType, CultureInfo.CurrentCulture);
         }

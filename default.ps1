@@ -42,7 +42,7 @@ properties {
   $roundhouse_local_backup_folder = "$base_dir\database_backups"
 
   $packageId = if ($env:package_id) { $env:package_id } else { "$project_name" }
-  $db_server = if ($env:db_server) { $env:db_server } else { ".\SqlExpress" }
+  $db_server = if ($env:db_server) { $env:db_server } else { "localhost" }
   $db_name = if ($env:db_name) { $env:db_name } else { "XlsToEf" }
   $example_db_name = if ($env:test_db_name) { $env:test_db_name } else { "$db_name.Example" }
   $test_db_name = if ($env:test_db_name) { $env:test_db_name } else { "$db_name.Tests" }

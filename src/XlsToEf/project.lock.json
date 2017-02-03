@@ -25,6 +25,18 @@
         "runtime": {
           "lib/net40/EPPlus.dll": {}
         }
+      },
+      "Z.EntityFramework.Extensions/3.10.39": {
+        "type": "package",
+        "dependencies": {
+          "EntityFramework": "6.0.0"
+        },
+        "compile": {
+          "lib/net45/Z.EntityFramework.Extensions.dll": {}
+        },
+        "runtime": {
+          "lib/net45/Z.EntityFramework.Extensions.dll": {}
+        }
       }
     }
   },
@@ -69,12 +81,24 @@
         "lib/net40/EPPlus.dll",
         "lib/readme.txt"
       ]
+    },
+    "Z.EntityFramework.Extensions/3.10.39": {
+      "sha512": "c325/BPqlFxrqnosY+1Y7OUFCxSZ7drXKDUJ6Xtr+79rwBiKhXDR3pPNT+/3+VmGoIfMVSmc8wVbCxgmOzZYtg==",
+      "type": "package",
+      "path": "Z.EntityFramework.Extensions/3.10.39",
+      "files": [
+        "Z.EntityFramework.Extensions.3.10.39.nupkg.sha512",
+        "Z.EntityFramework.Extensions.nuspec",
+        "lib/net40/Z.EntityFramework.Extensions.dll",
+        "lib/net45/Z.EntityFramework.Extensions.dll"
+      ]
     }
   },
   "projectFileDependencyGroups": {
     "": [
       "EPPlus >= 4.1.0",
-      "EntityFramework >= 6.1.3"
+      "EntityFramework >= 6.1.3",
+      "Z.EntityFramework.Extensions >= 3.10.39"
     ],
     ".NETFramework,Version=v4.6": []
   },
