@@ -14,7 +14,8 @@ namespace XlsToEf.Import
     {
         public string FileName { get; set; }
         public string Sheet { get; set; }
-        public List<XlsToEfColumnPair> Selected { get; set; } 
+        public List<XlsToEfColumnPair> Selected { get; set; }
+        public string FilePath { get; set; }
     }
 
     public class XlsToEfColumnPair

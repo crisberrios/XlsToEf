@@ -1,5 +1,5 @@
 {
-  "version": "0.0.2-hs-beta-*",
+  "version": "0.0.7-hs-beta-*",
 
   "dependencies": {
     "EntityFramework": "6.1.3",

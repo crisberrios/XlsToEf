@@ -71,7 +71,7 @@ namespace XlsToEf.Import
             var keyInfo = GetEntityKeys(typeof(TEntity));
             EnsureImportingEntityHasSingleKey(keyInfo);
             var pk = keyInfo[0];
-            Type idType = ((PrimitiveType)pk.TypeUsage.EdmType).ClrEquivalentType;
+            var idType = ((PrimitiveType)pk.TypeUsage.EdmType).ClrEquivalentType;
 
             if (idPropertyName == null)
             {
@@ -85,7 +85,7 @@ namespace XlsToEf.Import
             EnsureNoIdColumnIncludedWhenCreatingAutoIncrementEntites(saveBehavior.RecordMode, isAutoIncrementingId, isImportingEntityId);
 
             var importResult = new ImportResult { RowErrorDetails = new Dictionary<string, string>() };
-            var filePath = Path.GetTempPath() + matchingData.FileName;
+            var filePath = matchingData.FilePath != null ? (Path.GetTempPath() + matchingData.FileName) : matchingData.FileName;
             var excelRows = await _excelIoWrapper.GetRows(filePath, matchingData.Sheet);
             var foundErrors = false;
 
@@ -103,7 +103,7 @@ namespace XlsToEf.Import
                 var xlsxIdColName = selctedDict[idPropertyName];
 
                 rowIds.AddRange(excelRows.Select(excelRow => excelRow[xlsxIdColName])
-                    .Select(idStringValue => StringToTypeConverter.Convert(idStringValue, idType)));
+                    .Where(x => !string.IsNullOrEmpty(x)).Select(idStringValue => StringToTypeConverter.Convert(idStringValue, idType)));
 
                 if (rowIds.Count > 0)
                 {
@@ -131,15 +131,13 @@ namespace XlsToEf.Import
                     if (saveBehavior.checkForEmptyRows && ExcelRowIsBlank(excelRow))
                         continue;
 
-                    string idValue = null;
-
                     if (isImportingEntityId)
                     {
                         var xlsxIdColName = selctedDict[idPropertyName];
                         var idStringValue = excelRow[xlsxIdColName];
                         var id = rowIds[index];
 
-                        if (saveBehavior.RecordMode == RecordMode.CreateOrIgnore && existingIds.Contains(id))
+                        if (saveBehavior.RecordMode == RecordMode.CreateOrIgnore && (string.IsNullOrEmpty(idStringValue) || existingIds.Contains(id)))
                         {
                                 continue;
                         }
@@ -164,6 +162,8 @@ namespace XlsToEf.Import
                         }
                         else
                         {
+                            var xlsxIdColName = selctedDict[idPropertyName];
+                            var idValue = excelRow[xlsxIdColName];
                             EnsureNoEntityCreationWithIdWhenAutoIncrementIdType(idPropertyName, isAutoIncrementingId, idValue);
                             _dbContext.Set<TEntity>().Add(entityToUpdate);
                         }
@@ -201,7 +201,7 @@ namespace XlsToEf.Import
                     await _dbContext.SaveChangesAsync();
                 }
 
-                if (saveBehavior.CommitMode == CommitMode.Bulk && (index%100 == 0 || index == excelRows.Count - 1)  && !foundErrors)
+                if (saveBehavior.CommitMode == CommitMode.Bulk && (index%100 == 0 || index == excelRows.Count - 1))
                 {
                     if (task != null)
                     {
@@ -218,14 +218,20 @@ namespace XlsToEf.Import
             {
                 await task;
             }
+
+            if (pendingEntities.Count > 0)
+            {
+                _dbContext.Set<TEntity>().AddRange(pendingEntities);
+            }
             
             _dbContext.Configuration.AutoDetectChangesEnabled = true;
             _dbContext.Configuration.ValidateOnSaveEnabled = true;
 
             if ((saveBehavior.CommitMode == CommitMode.AnySuccessfulAtEndAsBulk) ||
-                (saveBehavior.CommitMode == CommitMode.CommitAllAtEndIfAllGoodOrRejectAll && !foundErrors))
+                (saveBehavior.CommitMode == CommitMode.CommitAllAtEndIfAllGoodOrRejectAll && !foundErrors) ||
+                (saveBehavior.CommitMode == CommitMode.Bulk))
             {
-                await _dbContext.SaveChangesAsync();
+                await _dbContext.BulkSaveChangesAsync(b => b.BatchSize = 50);
             }
 
             return importResult;
